@@ -649,6 +649,7 @@ tbody tr:hover td{background:#fafaf8}
         <label class="btn btn-ghost admin-only" style="display:none;cursor:pointer;margin:0">📥 CSV Times
           <input type="file" accept=".csv" style="display:none" onchange="importarCSVTimes(this)"/>
         </label>
+        <a class="btn btn-ghost admin-only" style="display:none;text-decoration:none" download="modelo_times.csv" href="data:text/csv;charset=utf-8,nome%2Ccor%2Cescudo_url%0AFlamengo%2C%231a4a2e%2C%0AFluminense%2C%23c0392b%2C%0AVasco%2C%23000000%2C%0ABotafogo%2C%23c9a84c%2C">📄 Modelo Times</a>
       </div>
       <div class="search-bar" id="times-search-bar"><span>🔍</span><input type="text" id="times-search" placeholder="Buscar time..." oninput="dFiltrarTimes()"/></div>
       <div id="times-lista"></div>
@@ -666,6 +667,7 @@ tbody tr:hover td{background:#fafaf8}
         <label class="btn btn-ghost admin-only" style="display:none;cursor:pointer;margin:0">📥 CSV Jogadores
           <input type="file" accept=".csv" style="display:none" onchange="importarCSVJogadores(this)"/>
         </label>
+        <a class="btn btn-ghost admin-only" style="display:none;text-decoration:none" download="modelo_jogadores.csv" href="data:text/csv;charset=utf-8,nome%2Cposicao%2Cnumero%2Ctime%2Ccampeonato%0AJoão%20Silva%2CAtacante%2C9%2CFlamengo%2CCampeonato%20Municipal%202025%0APedro%20Costa%2CGoleiro%2C1%2CTM-001%2C%0ACarlos%20Lima%2CMeia%2C10%2CFluminense%2C">📄 Modelo Jogadores</a>
       </div>
       <div class="search-bar"><span>🔍</span><input type="text" id="jogadores-search" placeholder="Buscar jogador ou time..." oninput="dFiltrarJogadores()"/></div>
       <div id="jogadores-lista"><div class="loader"><div class="spinner"></div></div></div>
