@@ -646,6 +646,9 @@ tbody tr:hover td{background:#fafaf8}
           <div class="page-sub">Elenco, estatísticas e histórico de cada clube</div>
         </div>
         <button class="btn btn-primary admin-only" style="display:none" onclick="openModalTime()">+ Novo Time</button>
+        <label class="btn btn-ghost admin-only" style="display:none;cursor:pointer;margin:0">📥 CSV Times
+          <input type="file" accept=".csv" style="display:none" onchange="importarCSVTimes(this)"/>
+        </label>
       </div>
       <div class="search-bar" id="times-search-bar"><span>🔍</span><input type="text" id="times-search" placeholder="Buscar time..." oninput="dFiltrarTimes()"/></div>
       <div id="times-lista"></div>
@@ -660,6 +663,9 @@ tbody tr:hover td{background:#fafaf8}
           <div class="page-sub">Todos os atletas cadastrados na liga</div>
         </div>
         <button class="btn btn-primary admin-only" style="display:none" onclick="openModalJogador()">+ Novo Jogador</button>
+        <label class="btn btn-ghost admin-only" style="display:none;cursor:pointer;margin:0">📥 CSV Jogadores
+          <input type="file" accept=".csv" style="display:none" onchange="importarCSVJogadores(this)"/>
+        </label>
       </div>
       <div class="search-bar"><span>🔍</span><input type="text" id="jogadores-search" placeholder="Buscar jogador ou time..." oninput="dFiltrarJogadores()"/></div>
       <div id="jogadores-lista"><div class="loader"><div class="spinner"></div></div></div>
@@ -1029,35 +1035,44 @@ tbody tr:hover td{background:#fafaf8}
 
 <!-- Modal Jogador -->
 <div class="modal-overlay" id="modal-jogador">
-  <div class="modal" style="max-width:380px">
+  <div class="modal" style="max-width:420px">
     <div class="modal-title" id="modal-jogador-title">Novo Jogador</div>
-    <div class="modal-sub">Cadastre um atleta na liga</div>
+    <div class="modal-sub">Cadastre um atleta · vínculos por time/campeonato</div>
     <div class="form-group" style="margin-bottom:12px">
       <label class="form-label">Nome</label>
       <input class="form-input" type="text" id="jogador-nome" placeholder="Nome completo"/>
     </div>
     <div class="form-grid form-grid-2" style="margin-bottom:12px">
       <div class="form-group">
+        <label class="form-label">Posição</label>
+        <select class="form-select" id="jogador-posicao">
+          <option value="">— Não informado —</option>
+          <option value="Goleiro">Goleiro</option>
+          <option value="Zagueiro">Zagueiro</option>
+          <option value="Lateral">Lateral</option>
+          <option value="Volante">Volante</option>
+          <option value="Meia">Meia</option>
+          <option value="Atacante">Atacante</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Número <span style="color:var(--muted-light)">(opcional)</span></label>
+        <input class="form-input" type="number" id="jogador-numero" min="1" max="99" placeholder="Ex: 10"/>
+      </div>
+    </div>
+    <hr class="modal-divider"/>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--verde);margin-bottom:10px">➕ Vínculo time / campeonato</div>
+    <div class="form-grid form-grid-2" style="margin-bottom:10px">
+      <div class="form-group">
         <label class="form-label">Time</label>
         <select class="form-select" id="jogador-time"><option value="">— Sem time —</option></select>
       </div>
       <div class="form-group">
-        <label class="form-label">Número</label>
-        <input class="form-input" type="number" id="jogador-numero" min="1" max="99" placeholder="Ex: 10"/>
+        <label class="form-label">Campeonato <span style="color:var(--muted-light)">(opcional)</span></label>
+        <select class="form-select" id="jogador-campeonato"><option value="">— Todos —</option></select>
       </div>
     </div>
-    <div class="form-group" style="margin-bottom:6px">
-      <label class="form-label">Posição</label>
-      <select class="form-select" id="jogador-posicao">
-        <option value="">— Não informado —</option>
-        <option value="Goleiro">Goleiro</option>
-        <option value="Zagueiro">Zagueiro</option>
-        <option value="Lateral">Lateral</option>
-        <option value="Volante">Volante</option>
-        <option value="Meia">Meia</option>
-        <option value="Atacante">Atacante</option>
-      </select>
-    </div>
+    <div id="jogador-vinculos-lista" style="margin-bottom:10px"></div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="salvarJogador()">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-jogador')">Cancelar</button>
@@ -1095,11 +1110,11 @@ const sb = supabase.createClient(SUPA_URL, SUPA_ANON);
 // ── STATE ────────────────────────────────────────────────
 let currentUser = null, currentRole = null;
 let editingJogoId = null, editingTimeId = null, editingChampId = null;
-let editingJogadorId = null, aprovandoUserId = null;
+let editingJogadorId = null, aprovandoUserId = null, _jogadorDefaultTeamId = null;
 
 // ── CACHE ────────────────────────────────────────────────
 const C = {
-  teams:null, players:null, championships:null, matches:null,
+  teams:null, players:null, player_teams:null, championships:null, matches:null,
   goals:null, cards:null, lineup:null, users:null, suspensions:null, assists:null,
   _ts:{},
   _TTL:5*60*1000,
@@ -1150,8 +1165,22 @@ async function getTeams(f=false){
 }
 async function getPlayers(f=false){
   if(!f&&!C.stale('players')) return C.players;
-  const {data}=await sb.from('players').select('*,teams(nome,cor)').order('nome');
+  const {data}=await sb.from('players').select('*').order('nome');
   return C.set('players',data||[]);
+}
+async function getPlayerTeams(f=false){
+  if(!f&&!C.stale('player_teams')) return C.player_teams;
+  const {data}=await sb.from('player_teams').select('*,teams(id,nome,cor,escudo_url),championships(id,nome)');
+  return C.set('player_teams',data||[]);
+}
+// Helper: retorna times de um jogador (todos ou filtrado por campeonato)
+function playerTeamsOf(playerTeams, playerId, champId=null){
+  return playerTeams.filter(pt=>pt.player_id===playerId&&(!champId||pt.championship_id===champId));
+}
+// Helper: retorna time principal (sem campeonato) ou o primeiro vínculo
+function playerMainTeam(playerTeams, playerId){
+  const all = playerTeams.filter(pt=>pt.player_id===playerId);
+  return all.find(pt=>!pt.championship_id)?.teams || all[0]?.teams || null;
 }
 async function getChampionships(f=false){
   if(!f&&!C.stale('championships')) return C.championships;
@@ -1696,7 +1725,8 @@ async function showTimeDetalhe(teamId){
   const [teams,players,matches,goals,cards,championships]=await Promise.all([getTeams(),getPlayers(),getMatches(),getGoals(),getCards(),getChampionships()]);
   const t=teams.find(x=>x.id===teamId);
   if(!t){ $('time-detalhe').innerHTML=emptyState('❌','Time não encontrado.'); return; }
-  const elenco=players.filter(p=>p.team_id===teamId);
+  const playerTeams=await getPlayerTeams();
+  const elenco=players.filter(p=>playerTeams.some(pt=>pt.player_id===p.id&&pt.team_id===teamId));
   const tjogos=matches.filter(m=>m.status==='realizada'&&(m.home_team_id===teamId||m.away_team_id===teamId))
     .sort((a,b)=>new Date(b.data)-new Date(a.data));
   const v=tjogos.filter(m=>(m.home_team_id===teamId&&m.gols_home>m.gols_away)||(m.away_team_id===teamId&&m.gols_away>m.gols_home)).length;
@@ -1743,7 +1773,7 @@ async function showTimeDetalhe(teamId){
     </div>
     <div class="grid-2">
       <div class="section">
-        <div class="section-head"><span class="section-title">👥 Elenco</span></div>
+        <div class="section-head"><span class="section-title">👥 Elenco</span>${currentRole?`<button class="btn btn-primary btn-sm" onclick="openModalJogador('${t.id}')">+ Jogador</button>`:''}</div>
         <div class="section-body">
           ${elenco.length ? `<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Nome</th><th>Pos.</th><th class="td-center">⚽</th></tr></thead><tbody>
           ${elenco.map(p=>`<tr style="cursor:pointer" onclick="goPage('pg-jogadores');setTimeout(()=>showJogadorPerfil('${p.id}'),100)">
@@ -1780,8 +1810,8 @@ async function showTimeDetalhe(teamId){
 let _jogadoresData = {players:[], goals:[], cards:[], matches:[], lineup:[]};
 
 async function renderJogadores(){
-  const [players,goals,cards,matches,lineup,assists]=await Promise.all([getPlayers(),getGoals(),getCards(),getMatches(),getLineup(),getAssists()]);
-  _jogadoresData={players,goals,cards,matches,lineup,assists,_golMap:null};
+  const [players,goals,cards,matches,lineup,assists,playerTeams]=await Promise.all([getPlayers(),getGoals(),getCards(),getMatches(),getLineup(),getAssists(),getPlayerTeams()]);
+  _jogadoresData={players,goals,cards,matches,lineup,assists,playerTeams,_golMap:null};
   $('jogadores-lista').style.display='';
   $('jogador-perfil').style.display='none';
   filtrarJogadores();
@@ -1796,22 +1826,28 @@ function filtrarJogadores(){
     _jogadoresData._golMap=gm;
   }
   const golMap=_jogadoresData._golMap;
-  const lista=players.filter(p=>!q||p.nome.toLowerCase().includes(q)||(p.teams?.nome||'').toLowerCase().includes(q));
+  const {playerTeams}=_jogadoresData;
+  const lista=players.filter(p=>!q||p.nome.toLowerCase().includes(q)||playerTeams.filter(pt=>pt.player_id===p.id).some(pt=>(pt.teams?.nome||'').toLowerCase().includes(q)));
   if(!lista.length){ $('jogadores-lista').innerHTML=emptyState('👥',q?'Nenhum jogador encontrado.':'Nenhum jogador cadastrado.'); return; }
   $('jogadores-lista').innerHTML=`<div class="section"><div class="tbl-wrap"><table>
-    <thead><tr><th>#</th><th>Nome</th><th>Time</th><th>Posição</th><th class="td-center">Gols</th>${currentRole?'<th></th>':''}</tr></thead>
-    <tbody>${lista.map(p=>`<tr style="cursor:pointer" onclick="showJogadorPerfil('${p.id}')">
-      <td>${p.numero||'—'}</td>
-      <td style="font-weight:500">${p.nome}</td>
-      <td><div style="display:flex;align-items:center;gap:6px">${p.teams?.nome?`<div class="time-cor" style="background:${p.teams?.cor||'#999'}"></div>`:''}${p.teams?.nome||'—'}</div></td>
-      <td>${p.posicao||'—'}</td>
-      <td class="td-center"><span class="num-bold">${golMap[p.id]||0}</span></td>
-      ${currentRole?`<td><div class="td-actions" onclick="event.stopPropagation()">
-        <button class="btn btn-ghost btn-sm" onclick="editJogador('${p.id}')">✏️</button>
-        <button class="btn btn-danger btn-sm" onclick="delJogador('${p.id}')">🗑️</button>
-      </div></td>`:''}
-    </tr>`).join('')}</tbody>
-  </table></div></div>`;
+    <thead><tr><th>Cód.</th><th>Nome</th><th>Times</th><th>Posição</th><th class="td-center">Gols</th>${currentRole?'<th></th>':''}</tr></thead>
+    <tbody>${lista.map(p=>{
+      const pTimes=(playerTeams||[]).filter(pt=>pt.player_id===p.id);
+      const timesStr=[...new Set(pTimes.map(pt=>pt.teams?.nome||'—'))].join(', ')||'—';
+      const timesDots=pTimes.map(pt=>`<div class="time-cor" style="background:${pt.teams?.cor||'#999'}" title="${pt.teams?.nome||''}${pt.championships?' ('+pt.championships?.nome+')':''}"></div>`).join('');
+      return `<tr style="cursor:pointer" onclick="showJogadorPerfil('${p.id}')">
+        <td style="color:var(--muted);font-size:11px;font-weight:600">${p.codigo||'—'}</td>
+        <td style="font-weight:500">${p.nome}</td>
+        <td><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${timesDots}<span style="font-size:12px">${timesStr}</span></div></td>
+        <td>${p.posicao||'—'}</td>
+        <td class="td-center"><span class="num-bold">${golMap[p.id]||0}</span></td>
+        ${currentRole?`<td><div class="td-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-ghost btn-sm" onclick="editJogador('${p.id}')">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="delJogador('${p.id}')">🗑️</button>
+        </div></td>`:''}
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div></div>`;;
 }
 
 async function showJogadorPerfil(playerId){
@@ -1820,7 +1856,10 @@ async function showJogadorPerfil(playerId){
   pf.style.display='block';
   pf.innerHTML=loader();
   const {players,goals,cards,matches,lineup,assists}=_jogadoresData;
+  const playerTeams2=_jogadoresData.playerTeams||[];
   const p=players.find(x=>x.id===playerId); if(!p){pf.innerHTML=emptyState('❌','Jogador não encontrado.');return;}
+  const pBindings=playerTeams2.filter(pt=>pt.player_id===playerId);
+  const mainTeam=pBindings.find(pt=>!pt.championship_id)?.teams||pBindings[0]?.teams||null;
   const golMap={};
   goals.forEach(g=>{ if(!golMap[g.player_id]) golMap[g.player_id]=0; golMap[g.player_id]+=g.quantidade||1; });
   const pGols=golMap[playerId]||0;
@@ -1843,7 +1882,7 @@ async function showJogadorPerfil(playerId){
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${p.numero?`<span class="chip">#${p.numero}</span>`:''}
           ${p.posicao?`<span class="badge badge-gray">${p.posicao}</span>`:''}
-          ${p.teams?.nome?`<span class="badge badge-verde" style="display:flex;align-items:center;gap:4px"><div class="time-cor" style="background:${p.teams?.cor||'#999'}"></div>${p.teams.nome}</span>`:'<span class="badge badge-gray">Sem time</span>'}
+          ${mainTeam?`<span class="badge badge-verde" style="display:flex;align-items:center;gap:4px"><div class="time-cor" style="background:${mainTeam?.cor||'#999'}"></div>${mainTeam.nome}</span>`:'<span class="badge badge-gray">Sem time</span>'}${pBindings.length>1?`<span class="badge badge-ouro">${pBindings.length} vínculos</span>`:''}
         </div>
       </div>
       ${currentRole?`<button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="editJogador('${p.id}')">✏️ Editar</button>`:''}
@@ -2096,6 +2135,93 @@ async function importarXLSX(input){
   }catch(e){ showAlert('rd-err','Erro ao ler arquivo: '+e.message,true); }
   input.value='';
 }
+
+// ── IMPORT CSV TIMES ─────────────────────────────────────────────
+// Colunas esperadas: nome, cor (hex), escudo_url (opcional)
+async function importarCSVTimes(input){
+  const file=input.files[0]; if(!file) return;
+  showAlert('rd-err','',false); showAlert('rd-ok','',false);
+  try{
+    const text=await file.text();
+    const rows=text.trim().split('\n').map(r=>r.split(',').map(c=>c.trim().replace(/^"|"$/g,'')));
+    const header=rows[0].map(h=>h.toLowerCase());
+    const iNome=header.indexOf('nome'), iCor=header.indexOf('cor'), iEscudo=header.indexOf('escudo_url');
+    if(iNome<0){showAlert('rd-err','Coluna "nome" não encontrada.',true);return;}
+    const toInsert=[], erros=[];
+    rows.slice(1).forEach((r,i)=>{
+      const nome=(r[iNome]||'').trim();
+      if(!nome) return;
+      const cor=iCor>=0?(r[iCor]||'#1a4a2e'):'#1a4a2e';
+      const escudo_url=iEscudo>=0&&r[iEscudo]?r[iEscudo]:null;
+      // Gera código TM-XXX
+      toInsert.push({nome,cor,escudo_url});
+    });
+    if(!toInsert.length){showAlert('rd-err','Nenhum time encontrado no CSV.',true);return;}
+    // Busca contagem atual para sequenciar códigos
+    const {count}=await sb.from('teams').select('*',{count:'exact',head:true});
+    const withCodes=toInsert.map((t,i)=>({...t,codigo:'TM-'+String((count||0)+i+1).padStart(3,'0')}));
+    await sb.from('teams').insert(withCodes);
+    C.teams=null;
+    showAlert('rd-ok',`${withCodes.length} time(s) importado(s) com sucesso!`,true);
+    await renderTimes();
+  }catch(e){showAlert('rd-err','Erro: '+e.message,true);}
+  input.value='';
+}
+
+// ── IMPORT CSV JOGADORES ─────────────────────────────────────────
+// Colunas esperadas: nome, posicao, numero, time (nome ou codigo), campeonato (nome, opcional)
+async function importarCSVJogadores(input){
+  const file=input.files[0]; if(!file) return;
+  showAlert('rd-err','',false); showAlert('rd-ok','',false);
+  try{
+    const text=await file.text();
+    const rows=text.trim().split('\n').map(r=>r.split(',').map(c=>c.trim().replace(/^"|"$/g,'')));
+    const header=rows[0].map(h=>h.toLowerCase().trim());
+    const iNome=header.indexOf('nome'),iPosicao=header.indexOf('posicao'),iNumero=header.indexOf('numero');
+    const iTime=header.indexOf('time'),iChamp=header.indexOf('campeonato');
+    if(iNome<0){showAlert('rd-err','Coluna "nome" não encontrada.',true);return;}
+    const [teams,champs]=await Promise.all([getTeams(),getChampionships()]);
+    const teamMap=Object.fromEntries([...teams.map(t=>[t.nome.toLowerCase(),t.id]),...teams.filter(t=>t.codigo).map(t=>[t.codigo.toLowerCase(),t.id])]);
+    const champMap=Object.fromEntries(champs.map(c=>[c.nome.toLowerCase(),c.id]));
+    const {count}=await sb.from('players').select('*',{count:'exact',head:true});
+    const playerRows=[], linkRows=[], erros=[];
+    rows.slice(1).forEach((r,i)=>{
+      const nome=(r[iNome]||'').trim(); if(!nome) return;
+      const teamNome=iTime>=0?(r[iTime]||'').trim():'';
+      const champNome=iChamp>=0?(r[iChamp]||'').trim():'';
+      const teamId=teamNome?teamMap[teamNome.toLowerCase()]:null;
+      const champId=champNome?champMap[champNome.toLowerCase()]:null;
+      if(teamNome&&!teamId){erros.push(`Linha ${i+2}: time "${teamNome}" não encontrado`); return;}
+      if(champNome&&!champId){erros.push(`Linha ${i+2}: campeonato "${champNome}" não encontrado`); return;}
+      playerRows.push({
+        _idx:i,
+        nome,
+        posicao:iPosicao>=0?r[iPosicao]||null:null,
+        numero:iNumero>=0?parseInt(r[iNumero])||null:null,
+        codigo:'JG-'+String((count||0)+playerRows.length+1).padStart(3,'0'),
+        _teamId:teamId,
+        _champId:champId||null
+      });
+    });
+    if(erros.length){showAlert('rd-err',erros.join(' | '),true); if(!playerRows.length) return;}
+    // Insert jogadores
+    const clean=playerRows.map(({_idx,_teamId,_champId,...p})=>p);
+    const {data:inserted}=await sb.from('players').insert(clean).select('id,codigo');
+    // Insert vínculos
+    const vincs=[];
+    playerRows.forEach((pr,i)=>{
+      if(!pr._teamId) return;
+      const pid=inserted?.[i]?.id; if(!pid) return;
+      vincs.push({player_id:pid,team_id:pr._teamId,championship_id:pr._champId});
+    });
+    if(vincs.length) await sb.from('player_teams').insert(vincs);
+    C.players=null; C.player_teams=null;
+    showAlert('rd-ok',`${clean.length} jogador(es) importado(s)!${erros.length?' ('+erros.length+' ignorados)':''}`,true);
+    await renderJogadores();
+  }catch(e){showAlert('rd-err','Erro: '+e.message,true);}
+  input.value='';
+}
+
 
 async function renderAgendados(){
   const matches=await getMatches(true);
@@ -2404,27 +2530,69 @@ async function salvarChampionship(){
 }
 
 // ── MODAL JOGADOR ────────────────────────────────────────
-async function openModalJogador(){
-  editingJogadorId=null; $('modal-jogador-title').textContent='Novo Jogador';
+async function openModalJogador(defaultTeamId=null){
+  editingJogadorId=null; _jogadorDefaultTeamId=defaultTeamId;
+  $('modal-jogador-title').textContent='Novo Jogador';
   $('jogador-nome').value=''; $('jogador-numero').value=''; $('jogador-posicao').value='';
-  const teams=await getTeams();
-  $('jogador-time').innerHTML='<option value="">— Sem time —</option>'+teams.map(t=>`<option value="${t.id}">${t.nome}</option>`).join('');
+  $('jogador-campeonato').value='';
+  const [teams, champs]=await Promise.all([getTeams(),getChampionships()]);
+  $('jogador-time').innerHTML='<option value="">— Sem time —</option>'+teams.map(t=>`<option value="${t.id}"${t.id===defaultTeamId?' selected':''}>${t.nome}</option>`).join('');
+  $('jogador-campeonato').innerHTML='<option value="">— Sem campeonato —</option>'+champs.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('');
   openModal('modal-jogador');
 }
 async function editJogador(id){
-  const players=await getPlayers(); const p=players.find(x=>x.id===id); if(!p) return;
-  editingJogadorId=id; $('modal-jogador-title').textContent='Editar Jogador';
-  $('jogador-nome').value=p.nome; $('jogador-numero').value=p.numero||''; $('jogador-posicao').value=p.posicao||'';
-  const teams=await getTeams();
-  $('jogador-time').innerHTML='<option value="">— Sem time —</option>'+teams.map(t=>`<option value="${t.id}" ${t.id===p.team_id?'selected':''}>${t.nome}</option>`).join('');
+  const [players,teams,champs,playerTeams]=await Promise.all([getPlayers(),getTeams(),getChampionships(),getPlayerTeams()]);
+  const p=players.find(x=>x.id===id); if(!p) return;
+  editingJogadorId=id; _jogadorDefaultTeamId=null;
+  $('modal-jogador-title').textContent='Editar Jogador';
+  $('jogador-nome').value=p.nome; $('jogador-numero').value=p.codigo||p.numero||''; $('jogador-posicao').value=p.posicao||'';
+  $('jogador-time').innerHTML='<option value="">— Sem time —</option>'+teams.map(t=>`<option value="${t.id}">${t.nome}</option>`).join('');
+  $('jogador-campeonato').innerHTML='<option value="">— Sem campeonato —</option>'+champs.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('');
+  // Preencher vínculos existentes
+  const vinculos=playerTeams.filter(pt=>pt.player_id===id);
+  const vinculosDiv=$('jogador-vinculos-lista');
+  if(vinculosDiv) vinculosDiv.innerHTML=vinculos.length
+    ? vinculos.map(pt=>`<div class="player-check-row" style="justify-content:space-between">
+        <span style="font-size:13px">${pt.teams?.nome||'—'}${pt.championships?' <span style="color:var(--muted);font-size:11px">· '+pt.championships?.nome+'</span>':''}</span>
+        <button class="btn btn-danger btn-sm" onclick="removerVinculo('${pt.id}','${id}')">✕</button>
+      </div>`).join('')
+    : '<div style="font-size:12px;color:var(--muted)">Nenhum vínculo cadastrado.</div>';
   openModal('modal-jogador');
 }
 async function salvarJogador(){
   const nome=$('jogador-nome').value.trim(); if(!nome) return;
-  const payload={nome,team_id:$('jogador-time').value||null,numero:parseInt($('jogador-numero').value)||null,posicao:$('jogador-posicao').value||null};
-  if(editingJogadorId) await sb.from('players').update(payload).eq('id',editingJogadorId);
-  else await sb.from('players').insert(payload);
-  closeModal('modal-jogador'); C.players=null; await renderJogadores();
+  const teamId=$('jogador-time').value||null;
+  const champId=$('jogador-campeonato').value||null;
+  // Gera código legível se novo jogador
+  let codigo=null;
+  if(!editingJogadorId){
+    const {count}=await sb.from('players').select('*',{count:'exact',head:true});
+    codigo='JG-'+String((count||0)+1).padStart(3,'0');
+  }
+  const payload={nome,posicao:$('jogador-posicao').value||null};
+  if(codigo) payload.codigo=codigo;
+  let playerId=editingJogadorId;
+  if(editingJogadorId){
+    await sb.from('players').update(payload).eq('id',editingJogadorId);
+  } else {
+    const {data}=await sb.from('players').insert(payload).select('id').single();
+    playerId=data?.id;
+  }
+  // Adiciona vínculo time/campeonato se informado
+  if(playerId && teamId){
+    await sb.from('player_teams').upsert({player_id:playerId,team_id:teamId,championship_id:champId||null},{onConflict:'player_id,team_id,championship_id'});
+  }
+  closeModal('modal-jogador');
+  C.players=null; C.player_teams=null;
+  // Volta para a tela certa
+  if(_jogadorDefaultTeamId) await showTimeDetalhe(_jogadorDefaultTeamId);
+  else await renderJogadores();
+}
+async function removerVinculo(ptId, playerId){
+  if(!confirm('Remover este vínculo?')) return;
+  await sb.from('player_teams').delete().eq('id',ptId);
+  C.player_teams=null;
+  await editJogador(playerId);
 }
 async function delJogador(id){
   if(!confirm('⚠️ Excluir este jogador? Esta ação não pode ser desfeita.')) return;
@@ -2903,90 +3071,79 @@ let liveEvents  = [];
 let livePlayers = { home:[], away:[] };
 let liveTimerInterval = null;
 let liveRealtimeCh = null;
-let livePendingEvent = null;
-
-// Strings de options dos selects — pré-computadas uma vez por abertura de partida
-let _liveOptsHome = '';
-let _liveOptsAway = '';
-let _liveOptsBoth = '';
+let livePendingEvent = null; // {type, side}
 
 // ── CRONÔMETRO ───────────────────────────────────────────────────
-// Cache das parsed dates de started_at para não re-instanciar a cada segundo
-let _liveStartedAt    = null;
-let _liveStartedAt2   = null;
-let _liveLastStartedStr  = null;
-let _liveLastStartedStr2 = null;
-
-function _getParsedStarted(match){
-  if(match.started_at !== _liveLastStartedStr){
-    _liveLastStartedStr = match.started_at;
-    _liveStartedAt = match.started_at ? new Date(match.started_at) : null;
-  }
-  return _liveStartedAt;
-}
-function _getParsedStarted2(match){
-  if(match.second_half_started_at !== _liveLastStartedStr2){
-    _liveLastStartedStr2 = match.second_half_started_at;
-    _liveStartedAt2 = match.second_half_started_at ? new Date(match.second_half_started_at) : null;
-  }
-  return _liveStartedAt2;
-}
-
 function calcMinuto(match, now = new Date(), comSegundos = false){
   if(!match.started_at) return null;
-  const pad = n => n < 10 ? '0'+n : ''+n;
-  const period = match.period;
-  if(period === 'first_half'){
-    const started = _getParsedStarted(match);
-    const totalSecs = Math.floor((now - started) / 1000);
-    const mins = totalSecs / 60 | 0;
+  const pad = n => String(n).padStart(2,'0');
+  const started = new Date(match.started_at);
+  if(match.period === 'first_half'){
+    const elapsed = now - started; // ms
+    const totalSecs = Math.floor(elapsed / 1000);
+    const mins = Math.floor(totalSecs / 60);
     const secs = totalSecs % 60;
-    const base = mins < 45 ? mins : 45;
-    const extra = mins > 45 ? mins - 45 : 0;
-    if(comSegundos) return extra > 0 ? `${base}+${extra}:${pad(secs)}'` : `${base}:${pad(secs)}'`;
+    const base = Math.min(mins, 45);
+    const extra = Math.max(0, mins - 45);
+    if(comSegundos){
+      if(extra > 0) return `${base}+${extra}:${pad(secs)}'`;
+      return `${base}:${pad(secs)}'`;
+    }
     return extra > 0 ? `${base}+${extra}'` : `${base}'`;
   }
-  if(period === 'halftime' || period === 'finished') return null;
-  if(period === 'second_half' && match.second_half_started_at){
-    const started2 = _getParsedStarted2(match);
-    const totalSecs = Math.floor((now - started2) / 1000);
-    const mins = 45 + (totalSecs / 60 | 0);
+  if(match.period === 'halftime') return null;
+  if(match.period === 'second_half' && match.second_half_started_at){
+    const started2 = new Date(match.second_half_started_at);
+    const elapsed = now - started2;
+    const totalSecs = Math.floor(elapsed / 1000);
+    const mins = 45 + Math.floor(totalSecs / 60);
     const secs = totalSecs % 60;
-    const base = mins < 90 ? mins : 90;
-    const extra = mins > 90 ? mins - 90 : 0;
-    if(comSegundos) return extra > 0 ? `${base}+${extra}:${pad(secs)}'` : `${base}:${pad(secs)}'`;
+    const base = Math.min(mins, 90);
+    const extra = Math.max(0, mins - 90);
+    if(comSegundos){
+      if(extra > 0) return `${base}+${extra}:${pad(secs)}'`;
+      return `${base}:${pad(secs)}'`;
+    }
     return extra > 0 ? `${base}+${extra}'` : `${base}'`;
   }
+  if(match.period === 'finished') return null;
   return null;
 }
 function calcMinutoNum(match, now = new Date()){
-  const p = match.period;
-  if(!match.started_at || p === 'halftime' || p === 'finished') return 0;
-  if(p === 'first_half') return (_getParsedStarted(match) ? ((now - _getParsedStarted(match)) / 60000 | 0) : 0);
-  if(p === 'second_half' && match.second_half_started_at) return 45 + (((now - _getParsedStarted2(match)) / 60000) | 0);
+  if(!match.started_at || match.period === 'halftime' || match.period === 'finished') return 0;
+  if(match.period === 'first_half'){
+    return Math.floor((now - new Date(match.started_at)) / 60000);
+  }
+  if(match.period === 'second_half' && match.second_half_started_at){
+    return 45 + Math.floor((now - new Date(match.second_half_started_at)) / 60000);
+  }
   return 0;
 }
 
-const _periodLabels = {pre:'Pré-Jogo',first_half:'1º Tempo',halftime:'Intervalo',second_half:'2º Tempo',finished:'Encerrado'};
-function periodLabel(period){ return _periodLabels[period]||period; }
-
-const _eventIcons = {goal:'⚽',yellow_card:'🟨',red_card:'🟥',substitution:'🔄',assist:'🅰️',kickoff:'▶️',halftime:'⏸️',second_half:'▶️',fulltime:'🏁'};
-function eventIcon(type){ return _eventIcons[type]||'•'; }
+function periodLabel(period){
+  return {pre:'Pré-Jogo',first_half:'1º Tempo',halftime:'Intervalo',second_half:'2º Tempo',finished:'Encerrado'}[period]||period;
+}
+function eventIcon(type){
+  const map={goal:'⚽',yellow_card:'🟨',red_card:'🟥',substitution:'🔄',assist:'🅰️',kickoff:'▶️',halftime:'⏸️',second_half:'▶️',fulltime:'🏁'};
+  return map[type]||'•';
+}
 
 // ── TIMER PÚBLICO NA HOME ────────────────────────────────────────
 function tickPublicTimer(m){
   const el = $('pub-timer-'+m.id);
   if(!el) return;
-  const p = m.period;
-  if(p === 'halftime') el.textContent = '⏸️ Intervalo';
-  else if(p === 'finished') el.textContent = '🏁 Encerrado';
-  else{ const min = calcMinuto(m); if(min) el.textContent = '⏱️ ' + min + ' · ' + periodLabel(p); else el.textContent = periodLabel(p); }
+  const min = calcMinuto(m);
+  if(m.period === 'halftime') el.textContent = '⏸️ Intervalo';
+  else if(m.period === 'finished') el.textContent = '🏁 Encerrado';
+  else if(min) el.textContent = '⏱️ ' + min + ' · ' + periodLabel(m.period);
+  else el.textContent = periodLabel(m.period);
 }
 
 // ── LISTA DE JOGOS NA ABA AO VIVO (admin) ────────────────────────
 async function renderTabAovivo(){
   $('aovivo-lista').innerHTML = '<div class="loader"><div class="spinner"></div></div>';
   try{
+    // Testar se colunas ao vivo existem
     const {data:testCols, error:colErr} = await sb.from('matches').select('is_live,period,started_at').limit(1);
     if(colErr){
       $('aovivo-lista').innerHTML = `<div style="padding:24px;background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius);color:var(--red)">
@@ -2997,8 +3154,10 @@ async function renderTabAovivo(){
       return;
     }
     const matches = await getMatches(true);
+    console.log('[LCF] renderTabAovivo: total matches=', matches.length);
     const agendadas = matches.filter(m => m.status === 'agendada' || m.is_live);
     agendadas.sort((a,b)=>new Date(a.data)-new Date(b.data));
+    console.log('[LCF] jogos agendados/ao vivo:', agendadas.length);
     if(!agendadas.length){
       $('aovivo-lista').innerHTML = '<div class="empty" style="padding:32px"><div class="empty-icon">📅</div>Nenhum jogo agendado.</div>';
       return;
@@ -3021,6 +3180,7 @@ async function renderTabAovivo(){
         </div>
       </div>`).join('')}</div>`;
   }catch(e){
+    console.error('[LCF] renderTabAovivo ERRO:', e);
     $('aovivo-lista').innerHTML = `<div style="padding:24px;background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius);color:var(--red)">
       <div style="font-weight:700;margin-bottom:6px">❌ Erro ao carregar</div>
       <div style="font-size:13px">${e.message}</div>
@@ -3035,104 +3195,54 @@ async function abrirCentralAovivo(matchId){
   try{
     await recarregarLive();
   }catch(e){
+    console.error('[LCF] abrirCentralAovivo erro:', e);
     $('live-scoreboard').innerHTML = `<div style="color:#fff;font-size:13px">❌ Erro: ${e.message}</div>`;
     return;
   }
+  // Subscrição realtime
   if(liveRealtimeCh) sb.removeChannel(liveRealtimeCh);
   liveRealtimeCh = sb.channel('live-admin-'+matchId)
-    // Novos eventos: só atualiza a timeline (leve)
-    .on('postgres_changes',{event:'INSERT',schema:'public',table:'match_events',filter:'match_id=eq.'+matchId},
-      async (payload)=>{ liveEvents.push(payload.new); renderLiveTimeline(); })
-    // Exclusão de evento: recarrega lista (raro)
-    .on('postgres_changes',{event:'DELETE',schema:'public',table:'match_events',filter:'match_id=eq.'+matchId},
-      async ()=>{ await _fetchLiveEvents(); renderLiveTimeline(); })
-    // Update de match: apenas atualiza scoreboard e controles (sem rebuscar tudo)
-    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'matches',filter:'id=eq.'+matchId},
-      (payload)=>{ liveMatch={...liveMatch,...payload.new}; renderLiveScoreboard(); renderLiveControls(); })
+    .on('postgres_changes',{event:'*',schema:'public',table:'match_events',filter:'match_id=eq.'+matchId}, async ()=>{ await recarregarLive(true); })
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'matches',filter:'id=eq.'+matchId}, async (payload)=>{ liveMatch={...liveMatch,...payload.new}; renderLiveScoreboard(); renderLiveControls(); })
     .subscribe();
-}
-
-// Busca apenas os eventos (leve, sem rebuscar match nem players)
-async function _fetchLiveEvents(){
-  const {data, error} = await sb.from('match_events')
-    .select('id,event_type,minute,description,player_id,team_id,created_at')
-    .eq('match_id',liveMatchId)
-    .order('created_at',{ascending:true});
-  if(error) console.error('[LCF] match_events erro:', error.message);
-  liveEvents = data || [];
 }
 
 async function recarregarLive(somenteEventos=false){
   if(!somenteEventos){
-    // Busca match e players em paralelo, com select mínimo no match
-    const [{data:matchData}, {data:playersData}] = await Promise.all([
-      sb.from('matches')
-        .select('id,status,is_live,period,started_at,second_half_started_at,rodada,gols_home,gols_away,championship_id,home_team_id,away_team_id,championships(nome),home:teams!home_team_id(id,nome,cor,escudo_url),away:teams!away_team_id(id,nome,cor,escudo_url)')
-        .eq('id',liveMatchId)
-        .single(),
-      sb.from('players').select('id,nome,numero,team_id').in('team_id',[liveMatch?.home_team_id, liveMatch?.away_team_id].filter(Boolean))
-    ]);
-
-    // Se não tinha liveMatch ainda, busca o match pela rota normal apenas na primeira vez
-    if(!liveMatch){
-      const matches = await getMatches(true);
-      liveMatch = matches.find(m=>m.id===liveMatchId);
-    } else {
-      if(matchData) liveMatch = {...liveMatch, ...matchData};
-    }
-    if(!liveMatch) return;
-
-    const allPlayers = playersData || [];
-    livePlayers.home = allPlayers.filter(p=>p.team_id===liveMatch.home_team_id);
-    livePlayers.away = allPlayers.filter(p=>p.team_id===liveMatch.away_team_id);
-
-    // Pré-computar strings de options UMA VEZ (evita re-gerar em cada evento/cartão)
-    _liveOptsHome = livePlayers.home.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
-    _liveOptsAway = livePlayers.away.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
-    _liveOptsBoth = `<optgroup label="${liveMatch.home?.nome||'Mandante'}">${_liveOptsHome}</optgroup><optgroup label="${liveMatch.away?.nome||'Visitante'}">${_liveOptsAway}</optgroup>`;
-
-    // Invalidar cache de datas
-    _liveLastStartedStr = null;
-    _liveLastStartedStr2 = null;
+    const [matches, players] = await Promise.all([getMatches(true), getPlayers()]);
+    liveMatch = matches.find(m=>m.id===liveMatchId);
+    console.log('[LCF] recarregarLive: match=', liveMatch?.id, 'period=', liveMatch?.period);
+    if(!liveMatch){ console.error('[LCF] Jogo não encontrado:', liveMatchId); return; }
+    livePlayers.home = players.filter(p=>p.team_id===liveMatch.home_team_id);
+    livePlayers.away = players.filter(p=>p.team_id===liveMatch.away_team_id);
   }
-
-  await _fetchLiveEvents();
+  const {data, error} = await sb.from('match_events').select('*').eq('match_id',liveMatchId).order('created_at',{ascending:true});
+  if(error) console.error('[LCF] match_events erro:', error.message);
+  liveEvents = data || [];
+  console.log('[LCF] eventos carregados:', liveEvents.length);
   renderLiveScoreboard();
   renderLiveControls();
   renderLiveTimeline();
-
-  // Timer local: renderiza só o scoreboard (leve) a cada segundo
+  // Iniciar/reiniciar timer local
   clearInterval(liveTimerInterval);
   if(liveMatch.is_live && liveMatch.period !== 'halftime' && liveMatch.period !== 'finished'){
-    liveTimerInterval = setInterval(_tickLiveTimer, 1000);
+    liveTimerInterval = setInterval(()=>{ renderLiveScoreboard(); },1000);
   }
-}
-
-// Timer tick: só atualiza o texto do cronômetro, NÃO recria o innerHTML do scoreboard inteiro
-function _tickLiveTimer(){
-  if(!liveMatch) return;
-  const min = calcMinuto(liveMatch, new Date(), true);
-  const el = document.getElementById('_live-timer-text');
-  if(el && min) el.textContent = '⏱️ ' + min;
 }
 
 function renderLiveScoreboard(){
   if(!liveMatch) return;
-  const min = calcMinuto(liveMatch, new Date(), true);
+  const min = calcMinuto(liveMatch, new Date(), true); // com segundos no cronômetro visual
   const period = liveMatch.period;
-
   let timerHtml = '';
-  if(period==='halftime')   timerHtml = '<div class="live-timer">⏸️ Intervalo</div>';
+  if(period==='halftime') timerHtml = '<div class="live-timer">⏸️ Intervalo</div>';
   else if(period==='finished') timerHtml = '<div class="live-timer">🏁 Encerrado</div>';
-  else if(min) timerHtml = `<div class="live-timer" id="_live-timer-text">⏱️ ${min}</div><div class="live-period-lbl">${periodLabel(period)}</div>`;
+  else if(min) timerHtml = `<div class="live-timer">⏱️ ${min}</div><div class="live-period-lbl">${periodLabel(period)}</div>`;
   else timerHtml = `<div class="live-period-lbl">${periodLabel(period)}</div>`;
-
-  const badgeCls = period==='halftime'?'halftime':period==='finished'?'finished':'';
-  const badgeTxt = period==='finished'?'⚫ Encerrado':period==='halftime'?'🟡 Intervalo':'🔴 Ao Vivo';
   const badgeHtml = liveMatch.is_live
-    ? `<span class="live-badge ${badgeCls}">${badgeTxt}</span>`
+    ? `<span class="live-badge ${period==='halftime'?'halftime':period==='finished'?'finished':''}">
+        ${period==='finished'?'⚫ Encerrado':period==='halftime'?'🟡 Intervalo':'🔴 Ao Vivo'}</span>`
     : `<span class="live-badge finished">📅 Pré-Jogo</span>`;
-
   $('live-badge-header').innerHTML = badgeHtml;
   $('live-scoreboard').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px">
@@ -3177,54 +3287,44 @@ function renderLiveControls(){
 function renderLiveTimeline(){
   const tl = $('live-timeline');
   if(!tl) return;
+  // Filtrar eventos de sistema (kickoff, halftime, second_half, fulltime ficam no fim como separadores)
   const systemTypes = new Set(['kickoff','halftime','second_half','fulltime']);
-  const gameEvents = [];
-  const sysEvents  = [];
-  for(const ev of liveEvents){
-    if(ev.event_type==='assist') continue;
-    (systemTypes.has(ev.event_type) ? sysEvents : gameEvents).push(ev);
-  }
+  const hiddenTypes = new Set(['assist']); // assist fica embutido no gol
+  const gameEvents = liveEvents.filter(ev=>!systemTypes.has(ev.event_type)&&!hiddenTypes.has(ev.event_type));
+  const sysEvents  = liveEvents.filter(ev=>systemTypes.has(ev.event_type));
   if(!liveEvents.length){ tl.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px">Nenhum evento ainda.</div>'; return; }
-
-  const parts = [];
-  for(const ev of gameEvents){
-    parts.push(`<div class="event-row" id="evrow-${ev.id}">
+  const renderEv = (ev, editavel=false) => `
+    <div class="event-row" id="evrow-${ev.id}">
       <span class="event-min">${ev.minute!=null?ev.minute+"'":'—'}</span>
       <span class="event-icon">${eventIcon(ev.event_type)}</span>
-      <div class="event-desc" style="flex:1"><div id="evdesc-${ev.id}">${ev.description||ev.event_type}</div></div>
-      <div style="display:flex;gap:4px;flex-shrink:0">
+      <div class="event-desc" style="flex:1">
+        <div id="evdesc-${ev.id}">${ev.description||ev.event_type}</div>
+      </div>
+      ${editavel?`<div style="display:flex;gap:4px;flex-shrink:0">
         <button style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 4px;opacity:.6" onclick="editarEvento(${ev.id})" title="Editar">✏️</button>
         <button style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 4px;opacity:.6" onclick="excluirEvento(${ev.id},'${ev.event_type}')" title="Excluir">🗑️</button>
-      </div>
-    </div>`);
-  }
-  for(const ev of sysEvents){
-    parts.push(`<div class="event-row" id="evrow-${ev.id}">
-      <span class="event-min">${ev.minute!=null?ev.minute+"'":'—'}</span>
-      <span class="event-icon">${eventIcon(ev.event_type)}</span>
-      <div class="event-desc" style="flex:1">${ev.description||ev.event_type}</div>
-    </div>`);
-  }
-  tl.innerHTML = parts.join('');
+      </div>`:''}
+    </div>`;
+  tl.innerHTML = [
+    ...gameEvents.map(ev=>renderEv(ev,true)),
+    ...sysEvents.map(ev=>renderEv(ev,false))
+  ].join('') || '<div style="font-size:12px;color:var(--muted);padding:8px">Nenhum evento ainda.</div>';
 }
 
 async function excluirEvento(evId, evType){
   if(!confirm('Remover este evento?')) return;
+  // Se for gol, reverter placar
   const ev = liveEvents.find(e=>e.id===evId);
   if(ev && evType==='goal' && ev.team_id){
     const isHome = ev.team_id===liveMatch.home_team_id;
     const scoreUpdate = isHome
       ? {gols_home:Math.max(0,(liveMatch.gols_home||1)-1)}
       : {gols_away:Math.max(0,(liveMatch.gols_away||1)-1)};
-    // Atualizar local imediatamente (otimista) e persistir em paralelo
-    liveMatch = {...liveMatch,...scoreUpdate};
-    renderLiveScoreboard();
     await sb.from('matches').update(scoreUpdate).eq('id',liveMatchId);
+    liveMatch={...liveMatch,...scoreUpdate};
   }
   await sb.from('match_events').delete().eq('id',evId);
-  // Remove do array local sem rebuscar
-  liveEvents = liveEvents.filter(e=>e.id!==evId);
-  renderLiveTimeline();
+  await recarregarLive(true);
 }
 
 function editarEvento(evId){
@@ -3232,49 +3332,71 @@ function editarEvento(evId){
   if(!ev) return;
   const row = document.getElementById('evrow-'+evId);
   if(!row) return;
+  // Se já tem form aberto, fechar
   const existing = document.getElementById('edit-form-'+evId);
   if(existing){ existing.remove(); return; }
 
+  const allPlayers = [...livePlayers.home,...livePlayers.away];
+  const optsBoth = `
+    <optgroup label="${liveMatch.home?.nome||'Mandante'}">${livePlayers.home.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('')}</optgroup>
+    <optgroup label="${liveMatch.away?.nome||'Visitante'}">${livePlayers.away.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('')}</optgroup>`;
+  const optsHome = livePlayers.home.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
+  const optsAway = livePlayers.away.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
+
   let formHtml = '';
   if(ev.event_type==='goal'){
+    // Descobrir lado pelo team_id
     const isHome = ev.team_id===liveMatch.home_team_id;
-    const scorerOpts = isHome ? _liveOptsHome : _liveOptsAway;
+    const scorerOpts = isHome ? optsHome : optsAway;
+    const assistOpts = isHome ? optsHome : optsAway;
     formHtml = `
       <label class="live-form-label">⚽ Quem fez o gol</label>
       <select class="live-select" id="ef-player-${evId}">
-        <option value="">— Selecione —</option>${scorerOpts}
+        <option value="">— Selecione —</option>
+        ${scorerOpts}
         <option value="__own__"${ev.player_id?'':' selected'}>🔙 Gol Contra</option>
       </select>
       <label class="live-form-label">🅰️ Assistência <span class="live-assist-note">(opcional)</span></label>
       <select class="live-select" id="ef-assist-${evId}">
-        <option value="">— Nenhuma —</option>${scorerOpts}
+        <option value="">— Nenhuma —</option>
+        ${assistOpts}
       </select>`;
+    // Pré-selecionar valores atuais depois de inserir no DOM
     setTimeout(()=>{
       const pSel = document.getElementById('ef-player-'+evId);
       if(pSel && ev.player_id) pSel.value = ev.player_id;
+      // Tentar achar assistência no evento de assist correspondente
       const assistEv = liveEvents.find(e=>e.event_type==='assist'&&Math.abs((e.minute||0)-(ev.minute||0))<=1&&e.team_id===ev.team_id);
       const aSel = document.getElementById('ef-assist-'+evId);
       if(aSel && assistEv?.player_id) aSel.value = assistEv.player_id;
-    }, 0);
+    }, 50);
   } else if(ev.event_type==='yellow_card'||ev.event_type==='red_card'){
     formHtml = `
       <label class="live-form-label">Jogador</label>
       <select class="live-select" id="ef-player-${evId}">
-        <option value="">— Selecione —</option>${_liveOptsBoth}
+        <option value="">— Selecione —</option>
+        ${optsBoth}
       </select>`;
-    setTimeout(()=>{ const s=document.getElementById('ef-player-'+evId); if(s&&ev.player_id) s.value=ev.player_id; }, 0);
+    setTimeout(()=>{ const s=document.getElementById('ef-player-'+evId); if(s&&ev.player_id) s.value=ev.player_id; },50);
   } else if(ev.event_type==='substitution'){
+    const isHome = liveMatch.home_team_id && livePlayers.home.some(p=>p.id===ev.player_id);
+    const opts = isHome ? optsHome : optsAway;
     formHtml = `
       <label class="live-form-label">Jogador que SAI</label>
       <select class="live-select" id="ef-sai-${evId}">
-        <option value="">— Selecione —</option>${_liveOptsBoth}
+        <option value="">— Selecione —</option>
+        ${optsBoth}
       </select>
       <label class="live-form-label">Jogador que ENTRA</label>
       <select class="live-select" id="ef-entra-${evId}">
-        <option value="">— Selecione —</option>${_liveOptsBoth}
+        <option value="">— Selecione —</option>
+        ${optsBoth}
       </select>`;
-    setTimeout(()=>{ const s=document.getElementById('ef-sai-'+evId); if(s&&ev.player_id) s.value=ev.player_id; }, 0);
+    setTimeout(()=>{
+      const s=document.getElementById('ef-sai-'+evId); if(s&&ev.player_id) s.value=ev.player_id;
+    },50);
   } else {
+    // Evento genérico: editar descrição
     formHtml = `<label class="live-form-label">Descrição</label>
       <input class="form-input" id="ef-desc-${evId}" value="${(ev.description||'').replace(/"/g,'&quot;')}" style="width:100%"/>`;
   }
@@ -3295,63 +3417,67 @@ function editarEvento(evId){
 async function salvarEdicaoEvento(evId){
   const ev = liveEvents.find(e=>e.id===evId);
   if(!ev) return;
-  const minStr = ev.minute != null ? ev.minute+"'" : '';
+  const min = ev.minute;
+  const minStr = min != null ? min+"'" : '';
   const updates = {};
-  const allP = [...livePlayers.home,...livePlayers.away];
 
   if(ev.event_type==='goal'){
     const pid = document.getElementById('ef-player-'+evId)?.value;
     if(!pid){alert('Selecione o jogador.'); return;}
     const assistId = document.getElementById('ef-assist-'+evId)?.value||'';
+    const isHome = ev.team_id===liveMatch.home_team_id;
     if(pid==='__own__'){
       updates.player_id = null;
       updates.description = `${minStr} 🔙 Gol Contra`;
     } else {
-      const p = allP.find(x=>x.id===pid);
-      const assistP = assistId ? allP.find(x=>x.id===assistId) : null;
+      const p = [...livePlayers.home,...livePlayers.away].find(x=>x.id===pid);
+      const assistP = assistId ? [...livePlayers.home,...livePlayers.away].find(x=>x.id===assistId) : null;
       updates.player_id = pid;
       updates.description = `${minStr} ⚽ ${p?.nome||'—'}${assistP?' (assist: '+assistP.nome+')':''}`;
     }
-    if(assistId && assistId!==updates.player_id && assistId!==''){
-      await sb.from('match_assists').insert({match_id:liveMatchId, player_id:assistId, quantidade:1});
+    // Atualizar match_assists (sem evento separado na timeline)
+    const newAssistId = document.getElementById('ef-assist-'+evId)?.value||'';
+    // Remover assist antigo desta partida para este minuto e re-inserir
+    if(newAssistId && newAssistId!==updates.player_id){
+      await sb.from('match_assists').insert({match_id:liveMatchId, player_id:newAssistId, quantidade:1});
     }
   } else if(ev.event_type==='yellow_card'||ev.event_type==='red_card'){
     const pid = document.getElementById('ef-player-'+evId)?.value;
     if(!pid){alert('Selecione o jogador.'); return;}
-    const p = allP.find(x=>x.id===pid);
+    const p = [...livePlayers.home,...livePlayers.away].find(x=>x.id===pid);
+    const icon = ev.event_type==='yellow_card'?'🟨':'🟥';
     updates.player_id = pid;
-    updates.description = `${minStr} ${ev.event_type==='yellow_card'?'🟨':'🟥'} ${p?.nome||'—'}`;
+    updates.description = `${minStr} ${icon} ${p?.nome||'—'}`;
   } else if(ev.event_type==='substitution'){
     const saiId = document.getElementById('ef-sai-'+evId)?.value;
     const entraId = document.getElementById('ef-entra-'+evId)?.value;
     if(!saiId||!entraId){alert('Selecione os dois jogadores.'); return;}
-    if(saiId===entraId){alert('Jogadores iguais.'); return;}
-    const pSai = allP.find(x=>x.id===saiId);
-    const pEntra = allP.find(x=>x.id===entraId);
+    if(saiId===entraId){alert('O jogador que sai e o que entra não podem ser o mesmo.'); return;}
+    const pSai = [...livePlayers.home,...livePlayers.away].find(x=>x.id===saiId);
+    const pEntra = [...livePlayers.home,...livePlayers.away].find(x=>x.id===entraId);
     updates.player_id = saiId;
     updates.description = `${minStr} 🔄 ${pSai?.nome||'—'} → ${pEntra?.nome||'—'}`;
   } else {
-    updates.description = document.getElementById('ef-desc-'+evId)?.value||'';
+    const desc = document.getElementById('ef-desc-'+evId)?.value||'';
+    updates.description = desc;
   }
 
-  // Atualiza local otimisticamente
-  const idx = liveEvents.findIndex(e=>e.id===evId);
-  if(idx>=0) liveEvents[idx] = {...liveEvents[idx],...updates};
-  document.getElementById('edit-form-'+evId)?.remove();
-  renderLiveTimeline();
-  // Persiste em background
   await sb.from('match_events').update(updates).eq('id',evId);
+  document.getElementById('edit-form-'+evId)?.remove();
+  await recarregarLive(true);
 }
 
 // ── AÇÕES DE PERÍODO ─────────────────────────────────────────────
 async function liveAcao(acao){
   const updates = {};
-  let eventType = '', desc = '';
+  let eventType = '';
+  let desc = '';
   if(acao==='start'){
     updates.is_live=true; updates.period='first_half'; updates.started_at=new Date().toISOString();
     eventType='kickoff'; desc='Início da partida';
   } else if(acao==='halftime'){
-    updates.period='halftime'; eventType='halftime'; desc='Intervalo';
+    updates.period='halftime';
+    eventType='halftime'; desc='Intervalo';
   } else if(acao==='second_half'){
     updates.period='second_half'; updates.second_half_started_at=new Date().toISOString();
     eventType='second_half'; desc='Início do 2º tempo';
@@ -3360,80 +3486,85 @@ async function liveAcao(acao){
     updates.is_live=false; updates.period='finished'; updates.status='realizada';
     eventType='fulltime'; desc='Fim de jogo';
   }
-  // Atualiza local imediatamente
-  liveMatch = {...liveMatch,...updates};
-  clearInterval(liveTimerInterval);
-  renderLiveScoreboard();
-  renderLiveControls();
-
-  // Persiste em paralelo
-  await Promise.all([
-    sb.from('matches').update(updates).eq('id',liveMatchId),
-    sb.from('match_events').insert({match_id:liveMatchId,event_type:eventType,minute:calcMinutoNum(liveMatch),description:desc})
-  ]);
+  await sb.from('matches').update(updates).eq('id',liveMatchId);
+  await sb.from('match_events').insert({match_id:liveMatchId,event_type:eventType,minute:calcMinutoNum(liveMatch),description:desc});
   if(acao==='finish') await consolidarPartidaAovivo();
   C.clear();
-
-  // Reinicia timer se necessário
-  if(liveMatch.is_live && liveMatch.period!=='halftime' && liveMatch.period!=='finished'){
-    liveTimerInterval = setInterval(_tickLiveTimer, 1000);
-  }
+  await recarregarLive();
 }
 
 // ── CONSOLIDAR ao encerrar ───────────────────────────────────────
 async function consolidarPartidaAovivo(){
-  const goalEvents   = liveEvents.filter(e=>e.event_type==='goal'&&e.player_id);
+  // Coletar gols e cartões dos eventos e gravar nas tabelas convencionais
+  const goalEvents = liveEvents.filter(e=>e.event_type==='goal'&&e.player_id);
   const yellowEvents = liveEvents.filter(e=>e.event_type==='yellow_card'&&e.player_id);
-  const redEvents    = liveEvents.filter(e=>e.event_type==='red_card'&&e.player_id);
+  const redEvents = liveEvents.filter(e=>e.event_type==='red_card'&&e.player_id);
+  // Agrupar gols por jogador
   const golMap = {};
   goalEvents.forEach(e=>{ golMap[e.player_id]=(golMap[e.player_id]||0)+1; });
-  const goalRows   = Object.entries(golMap).map(([pid,q])=>({match_id:liveMatchId,player_id:pid,quantidade:q}));
-  const cardRows   = [...yellowEvents.map(e=>({match_id:liveMatchId,player_id:e.player_id,tipo:'amarelo'})),
-                      ...redEvents.map(e=>({match_id:liveMatchId,player_id:e.player_id,tipo:'vermelho'}))];
-  const pidsEnv    = new Set([...goalEvents,...yellowEvents,...redEvents].map(e=>e.player_id));
+  const goalRows = Object.entries(golMap).map(([pid,q])=>({match_id:liveMatchId,player_id:pid,quantidade:q}));
+  const cardRows = [
+    ...yellowEvents.map(e=>({match_id:liveMatchId,player_id:e.player_id,tipo:'amarelo'})),
+    ...redEvents.map(e=>({match_id:liveMatchId,player_id:e.player_id,tipo:'vermelho'})),
+  ];
+  // Linha de escalação: todos os jogadores que tiveram algum evento
+  const pidsEnv = new Set([...goalEvents,...yellowEvents,...redEvents].filter(e=>e.player_id).map(e=>e.player_id));
   const lineupRows = [...pidsEnv].map(pid=>({match_id:liveMatchId,player_id:pid}));
+  // Limpar registros antigos e inserir novos
   await Promise.all([
     sb.from('match_goals').delete().eq('match_id',liveMatchId),
     sb.from('match_cards').delete().eq('match_id',liveMatchId),
     sb.from('match_lineup').delete().eq('match_id',liveMatchId),
   ]);
   await Promise.all([
-    goalRows.length   ? sb.from('match_goals').insert(goalRows)    : null,
-    cardRows.length   ? sb.from('match_cards').insert(cardRows)    : null,
-    lineupRows.length ? sb.from('match_lineup').insert(lineupRows) : null,
+    goalRows.length  ? sb.from('match_goals').insert(goalRows)  : null,
+    cardRows.length  ? sb.from('match_cards').insert(cardRows)   : null,
+    lineupRows.length? sb.from('match_lineup').insert(lineupRows): null,
   ].filter(Boolean));
+  // Disparar suspensões automáticas
   if(cardRows.length) await processarSuspensoes(liveMatchId, cardRows);
 }
 
-// ── REGISTRAR EVENTO (gol, cartão, sub) ─────────────────────────
+// ── EVENTOS (gol, cartão, sub) ───────────────────────────────────
 function liveEvento(type, side){
   livePendingEvent = {type, side};
   const form = $('live-event-form');
   form.style.display = 'block';
   const titles = {goal:'⚽ Registrar Gol', yellow_card:'🟨 Cartão Amarelo', red_card:'🟥 Cartão Vermelho', substitution:'🔄 Substituição'};
   $('live-form-title').textContent = titles[type] || type;
-
   let html = '';
+  const allPlayers = [...livePlayers.home,...livePlayers.away];
+  const optsBothTeams = `
+    <optgroup label="${liveMatch.home?.nome||'Mandante'}">${livePlayers.home.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('')}</optgroup>
+    <optgroup label="${liveMatch.away?.nome||'Visitante'}">${livePlayers.away.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('')}</optgroup>`;
+
   if(type==='goal'){
-    // Usa strings pré-computadas — zero concatenação de array aqui
-    const opts = side==='home' ? _liveOptsHome : _liveOptsAway;
+    const scorers = side==='home' ? livePlayers.home : livePlayers.away;
+    const scorerOpts = scorers.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
+    // Assistência: todos do mesmo time (gol contra: sem assistência relevante)
+    const assistOpts = scorers.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
     html = `
       <label class="live-form-label">⚽ Quem fez o gol</label>
       <select class="live-select" id="lev-player">
-        <option value="">— Selecione —</option>${opts}
+        <option value="">— Selecione —</option>
+        ${scorerOpts}
         <option value="__own__">🔙 Gol Contra</option>
       </select>
       <label class="live-form-label">🅰️ Assistência <span class="live-assist-note">(opcional)</span></label>
       <select class="live-select" id="lev-assist">
-        <option value="">— Nenhuma —</option>${opts}
+        <option value="">— Nenhuma —</option>
+        ${assistOpts}
       </select>`;
   } else if(type==='yellow_card'||type==='red_card'){
     html = `
       <label class="live-form-label">Jogador</label>
       <select class="live-select" id="lev-player">
-        <option value="">— Selecione —</option>${_liveOptsBoth}
+        <option value="">— Selecione —</option>
+        ${optsBothTeams}
       </select>`;
   } else if(type==='substitution'){
+    // Substituição: separada por time, com validação
+    const makeSubOpts = players => players.map(p=>`<option value="${p.id}|${p.team_id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
     html = `
       <label class="live-form-label">Time</label>
       <select class="live-select" id="lev-sub-time" onchange="atualizarOpsSub()">
@@ -3442,21 +3573,28 @@ function liveEvento(type, side){
         <option value="away">${liveMatch.away?.nome||'Visitante'}</option>
       </select>
       <label class="live-form-label">Jogador que SAI</label>
-      <select class="live-select" id="lev-sai"><option value="">— Selecione o time primeiro —</option></select>
+      <select class="live-select" id="lev-sai" onchange="atualizarOpsSub()">
+        <option value="">— Selecione o time primeiro —</option>
+      </select>
       <label class="live-form-label">Jogador que ENTRA</label>
-      <select class="live-select" id="lev-entra"><option value="">— Selecione o time primeiro —</option></select>`;
+      <select class="live-select" id="lev-entra">
+        <option value="">— Selecione o time primeiro —</option>
+      </select>`;
   }
   $('live-form-body').innerHTML = html;
 }
 
 function atualizarOpsSub(){
   const side = $('lev-sub-time')?.value;
-  if(!side) return;
-  const opts = side==='home' ? _liveOptsHome : _liveOptsAway;
+  const saiVal = $('lev-sai')?.value;
+  if(!side){ return; }
+  const players = side==='home' ? livePlayers.home : livePlayers.away;
+  const opts = players.map(p=>`<option value="${p.id}">${p.nome}${p.numero?' #'+p.numero:''}</option>`).join('');
   const saiSel = $('lev-sai');
   const entraSel = $('lev-entra');
-  if(saiSel)   saiSel.innerHTML   = `<option value="">— Selecione —</option>${opts}`;
+  if(saiSel) saiSel.innerHTML = `<option value="">— Selecione —</option>${opts}`;
   if(entraSel) entraSel.innerHTML = `<option value="">— Selecione —</option>${opts}`;
+  // Restaurar seleção anterior se existir
 }
 
 function cancelarEvento(){
@@ -3467,94 +3605,90 @@ function cancelarEvento(){
 async function confirmarEvento(){
   if(!livePendingEvent) return;
   const {type, side} = livePendingEvent;
-  const now = new Date();
-  const min = calcMinutoNum(liveMatch, now);
-  const minStr = calcMinuto(liveMatch, now) || (min+"'");
-  const allP = [...livePlayers.home,...livePlayers.away];
+  const min = calcMinutoNum(liveMatch);
+  const minStr = calcMinuto(liveMatch);
   let eventData = {match_id:liveMatchId, event_type:type, minute:min};
-  let scoreUpdate = null;
-  let assistInsert = null;
 
   if(type==='goal'){
     const pid = $('lev-player')?.value;
     if(!pid){alert('Selecione o jogador.'); return;}
-    const assistId = $('lev-assist')?.value||'';
+    const assistId = $('lev-assist')?.value || '';
     if(pid==='__own__'){
-      eventData.team_id = side==='home' ? liveMatch.away_team_id : liveMatch.home_team_id;
-      eventData.description = `${minStr} 🔙 Gol Contra`;
+      const teamId = side==='home' ? liveMatch.away_team_id : liveMatch.home_team_id;
+      eventData.team_id = teamId;
+      eventData.description = `${minStr||min+"'"} 🔙 Gol Contra`;
     } else {
-      const p = allP.find(x=>x.id===pid);
-      const assistP = assistId ? allP.find(x=>x.id===assistId) : null;
+      const p = [...livePlayers.home,...livePlayers.away].find(x=>x.id===pid);
+      const assistP = assistId ? [...livePlayers.home,...livePlayers.away].find(x=>x.id===assistId) : null;
       eventData.player_id = pid;
       eventData.team_id = side==='home' ? liveMatch.home_team_id : liveMatch.away_team_id;
-      eventData.description = `${minStr} ⚽ ${p?.nome||'—'}${assistP?' (assist: '+assistP.nome+')':''}`;
+      eventData.description = `${minStr||min+"'"} ⚽ ${p?.nome||'—'}${assistP?' (assist: '+assistP.nome+')':''}`;
     }
-    if(assistId && assistId!==pid && pid!=='__own__'){
-      assistInsert = {match_id:liveMatchId, player_id:assistId, quantidade:1};
+    // Gravar assistência em match_assists (sem criar evento separado na timeline)
+    if(assistId && assistId !== pid && pid !== '__own__'){
+      await sb.from('match_assists').insert({match_id:liveMatchId, player_id:assistId, quantidade:1});
     }
-    scoreUpdate = side==='home'
+    // Atualizar placar
+    const scoreUpdate = side==='home'
       ? {gols_home:(liveMatch.gols_home||0)+1}
       : {gols_away:(liveMatch.gols_away||0)+1};
-
-    // Atualiza placar LOCAL imediatamente (otimista)
+    await sb.from('matches').update(scoreUpdate).eq('id',liveMatchId);
     liveMatch = {...liveMatch,...scoreUpdate};
-    renderLiveScoreboard();
-
   } else if(type==='yellow_card'||type==='red_card'){
     const pid = $('lev-player')?.value;
     if(!pid){alert('Selecione o jogador.'); return;}
-    const p = allP.find(x=>x.id===pid);
+    const p = [...livePlayers.home,...livePlayers.away].find(x=>x.id===pid);
+    let finalType = type;
+    let icon = type==='yellow_card'?'🟨':'🟥';
     // 2 amarelos = vermelho automático
-    if(type==='yellow_card' && liveEvents.filter(e=>e.event_type==='yellow_card'&&e.player_id===pid).length >= 1){
-      eventData.event_type = 'red_card';
-      eventData.player_id = pid;
-      eventData.description = `${minStr} 🟨🟥 ${p?.nome||'—'} (2º amarelo = expulsão)`;
-      cancelarEvento();
-      // Insere amarelo + vermelho em paralelo
-      await Promise.all([
-        sb.from('match_events').insert({match_id:liveMatchId,event_type:'yellow_card',minute:min,player_id:pid,description:`${minStr} 🟨 ${p?.nome||'—'}`}),
-        sb.from('match_events').insert(eventData)
-      ]);
-      await _fetchLiveEvents();
-      renderLiveTimeline();
-      return;
+    if(type==='yellow_card'){
+      const amarelosDoJogador = liveEvents.filter(e=>e.event_type==='yellow_card'&&e.player_id===pid).length;
+      if(amarelosDoJogador >= 1){
+        // Já tem 1 amarelo — este vira vermelho
+        finalType = 'red_card';
+        icon = '🟨🟥';
+        eventData.event_type = 'red_card';
+        eventData.description = `${minStr||min+"'"} 🟨🟥 ${p?.nome||'—'} (2º amarelo = expulsão)`;
+        // Gravar o amarelo também
+        await sb.from('match_events').insert({
+          match_id: liveMatchId, event_type:'yellow_card', minute:min,
+          player_id: pid, description:`${minStr||min+"'"} 🟨 ${p?.nome||'—'}`
+        });
+        await sb.from('match_events').insert(eventData);
+        cancelarEvento();
+        await recarregarLive(true);
+        return;
+      }
     }
     eventData.player_id = pid;
-    eventData.event_type = type;
-    eventData.description = `${minStr} ${type==='yellow_card'?'🟨':'🟥'} ${p?.nome||'—'}`;
-
+    eventData.event_type = finalType;
+    eventData.description = `${minStr||min+"'"} ${icon} ${p?.nome||'—'}`;
   } else if(type==='substitution'){
     const subSide = $('lev-sub-time')?.value;
-    const saiId   = $('lev-sai')?.value;
+    const saiId = $('lev-sai')?.value;
     const entraId = $('lev-entra')?.value;
     if(!subSide){alert('Selecione o time.'); return;}
     if(!saiId||!entraId){alert('Selecione os dois jogadores.'); return;}
-    if(saiId===entraId){alert('Jogadores iguais.'); return;}
-    const pSai   = allP.find(x=>x.id===saiId);
-    const pEntra = allP.find(x=>x.id===entraId);
+    if(saiId===entraId){alert('O jogador que sai e o que entra não podem ser o mesmo.'); return;}
+    const pSai = [...livePlayers.home,...livePlayers.away].find(x=>x.id===saiId);
+    const pEntra = [...livePlayers.home,...livePlayers.away].find(x=>x.id===entraId);
     eventData.player_id = saiId;
-    eventData.description = `${minStr} 🔄 ${pSai?.nome||'—'} → ${pEntra?.nome||'—'}`;
+    eventData.description = `${minStr||min+"'"} 🔄 ${pSai?.nome||'—'} → ${pEntra?.nome||'—'}`;
   }
 
+  await sb.from('match_events').insert(eventData);
   cancelarEvento();
-
-  // Dispara tudo em paralelo — sem await sequencial
-  const ops = [sb.from('match_events').insert(eventData)];
-  if(scoreUpdate) ops.push(sb.from('matches').update(scoreUpdate).eq('id',liveMatchId));
-  if(assistInsert) ops.push(sb.from('match_assists').insert(assistInsert));
-  await Promise.all(ops);
-
-  // Atualiza timeline local sem rebuscar
-  await _fetchLiveEvents();
-  renderLiveTimeline();
+  await recarregarLive(true);
 }
 
 // ── VISUALIZADOR PÚBLICO AO VIVO ─────────────────────────────────
-let pubRealtimeCh  = null;
+let pubRealtimeCh = null;
 let pubLiveMatchId = null;
 
 async function abrirPublicoAovivo(matchId){
   pubLiveMatchId = matchId;
+
+  // Garantir modal no DOM
   let modal = document.getElementById('modal-pub-live');
   if(!modal){
     modal = document.createElement('div');
@@ -3572,12 +3706,16 @@ async function abrirPublicoAovivo(matchId){
     </div>`;
     document.body.appendChild(modal);
   }
-  document.getElementById('pub-live-scoreboard').innerHTML = '<div class="loader"><div class="spinner"></div></div>';
-  document.getElementById('pub-live-timeline').innerHTML = '';
+  // Limpar antes de abrir
+  const sb_el = document.getElementById('pub-live-scoreboard');
+  const tl_el = document.getElementById('pub-live-timeline');
+  if(sb_el) sb_el.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  if(tl_el) tl_el.innerHTML = '';
   modal.classList.add('open');
 
   await renderPublicoAovivo();
 
+  // Realtime
   if(pubRealtimeCh) sb.removeChannel(pubRealtimeCh);
   pubRealtimeCh = sb.channel('live-pub-'+matchId)
     .on('postgres_changes',{event:'INSERT',schema:'public',table:'match_events',filter:'match_id=eq.'+matchId}, ()=>renderPublicoAovivo())
@@ -3587,25 +3725,26 @@ async function abrirPublicoAovivo(matchId){
   window._pubTimerInt = setInterval(renderPubTimer, 1000);
 }
 
+
 async function renderPublicoAovivo(){
-  const [matches, {data:events}] = await Promise.all([
+  const [matches, events] = await Promise.all([
     getMatches(true),
-    sb.from('match_events').select('id,event_type,minute,description').eq('match_id',pubLiveMatchId).order('created_at',{ascending:true})
+    sb.from('match_events').select('*').eq('match_id',pubLiveMatchId).order('created_at',{ascending:true}).then(r=>r.data||[])
   ]);
   const m = matches.find(x=>x.id===pubLiveMatchId);
   if(!m) return;
   window._pubLiveMatch = m;
   renderPubScoreboard(m);
   const tl = document.getElementById('pub-live-timeline');
-  if(!tl) return;
-  const evArr = events||[];
-  tl.innerHTML = evArr.length
-    ? evArr.slice().reverse().map(ev=>`<div class="event-row">
+  if(tl){
+    if(!events.length){ tl.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px">Aguardando eventos...</div>'; }
+    else { tl.innerHTML = [...events].reverse().map(ev=>`
+      <div class="event-row">
         <span class="event-min">${ev.minute!=null?ev.minute+"'":''}</span>
         <span class="event-icon">${eventIcon(ev.event_type)}</span>
         <div class="event-desc">${ev.description||ev.event_type}</div>
-      </div>`).join('')
-    : '<div style="font-size:12px;color:var(--muted);padding:8px">Aguardando eventos...</div>';
+      </div>`).join(''); }
+  }
 }
 
 function renderPubScoreboard(m){
@@ -3613,32 +3752,27 @@ function renderPubScoreboard(m){
   if(!el) return;
   const min = calcMinuto(m, new Date(), true);
   let timerHtml = '';
-  if(m.period==='halftime')    timerHtml='<div class="live-timer">⏸️ Intervalo</div>';
-  else if(m.period==='finished') timerHtml='<div class="live-timer" id="_pub-timer-text">🏁 Encerrado</div>';
-  else if(min) timerHtml=`<div class="live-timer" id="_pub-timer-text">⏱️ ${min}</div><div class="live-period-lbl">${periodLabel(m.period)}</div>`;
-  const p=m.period;
+  if(m.period==='halftime') timerHtml='<div class="live-timer">⏸️ Intervalo</div>';
+  else if(m.period==='finished') timerHtml='<div class="live-timer">🏁 Encerrado</div>';
+  else if(min) timerHtml=`<div class="live-timer">⏱️ ${min}</div><div class="live-period-lbl">${periodLabel(m.period)}</div>`;
+  const meta=`<div style="text-align:center;font-size:10px;color:rgba(255,255,255,.5);letter-spacing:.5px;text-transform:uppercase;margin-bottom:14px">${m.championships?.nome||''} · Rd ${m.rodada||'?'}</div>`;
   el.innerHTML=`
-    <div style="text-align:center;font-size:10px;color:rgba(255,255,255,.5);letter-spacing:.5px;text-transform:uppercase;margin-bottom:14px">${m.championships?.nome||''} · Rd ${m.rodada||'?'}</div>
+    ${meta}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
       <div class="partida-team">${escudo(m.home,'lg')}<div class="partida-team-name">${m.home?.nome||'—'}</div></div>
       <div class="partida-score-block">
         <div class="partida-score">${m.gols_home||0}<span class="partida-score-sep">×</span>${m.gols_away||0}</div>
         ${timerHtml}
         <div style="margin-top:8px;display:flex;justify-content:center">
-          <span class="live-badge ${p==='halftime'?'halftime':p==='finished'?'finished':''}">${p==='finished'?'🏁 Encerrado':p==='halftime'?'⏸️ Intervalo':'🔴 Ao Vivo'}</span>
+          <span class="live-badge ${m.period==='halftime'?'halftime':m.period==='finished'?'finished':''}">${m.period==='finished'?'🏁 Encerrado':m.period==='halftime'?'⏸️ Intervalo':'🔴 Ao Vivo'}</span>
         </div>
       </div>
       <div class="partida-team">${escudo(m.away,'lg')}<div class="partida-team-name">${m.away?.nome||'—'}</div></div>
     </div>`;
 }
 
-// Timer público: atualiza só o span do cronômetro
 function renderPubTimer(){
-  const m = window._pubLiveMatch;
-  if(!m || !m.is_live || m.period==='halftime' || m.period==='finished') return;
-  const el = document.getElementById('_pub-timer-text');
-  const min = calcMinuto(m, new Date(), true);
-  if(el && min) el.textContent = '⏱️ ' + min;
+  if(window._pubLiveMatch) renderPubScoreboard(window._pubLiveMatch);
 }
 
 function fecharPublicoAovivo(){
@@ -3752,7 +3886,7 @@ async function abrirModalPartida(matchId){
     // Badge de status
     const dotColor = m.is_live ? '#4ade80' : m.status==='realizada' ? '#86efac' : '#94a3b8';
     const dotLabel = m.is_live
-      ? (periodLabel(m.period)||'Ao Vivo')
+      ? (periodLabel?.(m.period)||'Ao Vivo')
       : m.status==='realizada' ? 'Realizada' : 'Agendada';
     const badgeHtml = `<div class="partida-badge"><div class="partida-badge-dot" style="background:${dotColor}"></div><span class="partida-badge-txt">${dotLabel}</span></div>`;
     const timerLineHtml = m.is_live && m.period && m.period!=='pre'
